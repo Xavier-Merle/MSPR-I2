@@ -1,0 +1,38 @@
+VAGRANTFILE_API_VERSION = "2"
+
+Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
+  image_path = "../Packer/debian-kube.box"  # Ton image packée
+
+  nodes = [
+    { :hostname => "kube-1", :ip => "192.168.56.100" },
+    { :hostname => "kube-2", :ip => "192.168.56.101" },
+    { :hostname => "kube-3", :ip => "192.168.56.102" }
+  ]
+
+  config.vm.box = "debian-kube"
+  config.vm.box_url = image_path
+
+  nodes.each do |node|
+    config.vm.define node[:hostname] do |node_config|
+      node_config.vm.hostname = node[:hostname]
+
+      node_config.vm.network "private_network", ip: node[:ip]
+
+      node_config.vm.provider :virtualbox do |vb|
+        vb.name = node[:hostname]
+        vb.memory = 4096
+        vb.cpus = 2
+      end
+
+      node_config.ssh.username = "kube"
+      node_config.ssh.password = "kube"
+      node_config.ssh.insert_key = false
+
+      node_config.vm.provision "ansible_local" do |ansible|
+        ansible.playbook = "playbooks/k3s-cluster.yml"
+        ansible.inventory_path = "inventory.ini"
+        ansible.limit = node[:hostname]
+      end
+    end
+  end
+end

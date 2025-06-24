@@ -1,0 +1,63 @@
+{
+  "variables": {
+    "vm_name": "kube",
+    "numvcpus": "2",
+    "memsize": "4096",
+    "disk_size": "40960",
+    "iso_url": "https://cdimage.debian.org/cdimage/archive/11.0.0/amd64/iso-cd/debian-11.0.0-amd64-netinst.iso",
+    "iso_checksum": "ae6d563d2444665316901fe7091059ac34b8f67ba30f9159f7cef7d2fdc5bf8a",
+    "ssh_username": "kube",
+    "ssh_password": "kube",
+    "boot_wait": "5s"
+  },
+  "builders": [
+    {
+      "type": "virtualbox-iso",
+      "boot_command": ["<esc><wait>auto preseed/url=http://{{ .HTTPIP }}:{{ .HTTPPort }}/preseed.cfg<enter>"],
+      "boot_wait": "{{ user `boot_wait` }}",
+      "disk_size": "{{ user `disk_size` }}",
+      "headless": false,
+      "guest_os_type": "Debian_64",
+      "http_directory": "http",
+      "iso_checksum": "{{ user `iso_checksum` }}",
+      "iso_url": "{{ user `iso_url` }}",
+      "shutdown_command": "echo 'kube'|sudo -S shutdown -P now",
+      "ssh_password": "{{ user `ssh_password` }}",
+      "ssh_port": 22,
+      "ssh_username": "{{ user `ssh_username` }}",
+      "ssh_timeout": "30m",
+      "vm_name": "{{ user `vm_name` }}",
+      "vboxmanage": [
+        ["modifyvm", "{{.Name}}", "--memory", "{{ user `memsize` }}"],
+        ["modifyvm", "{{.Name}}", "--cpus", "{{ user `numvcpus` }}"]
+      ]
+    }
+  ],
+  "provisioners": [
+    {
+      "type": "shell",
+      "execute_command": "echo 'kube'|{{.Vars}} sudo -S -E bash '{{.Path}}'",
+      "inline": [
+        "apt -y update && apt -y upgrade",
+        "apt -y install python3-pip sshpass",
+        "pip3 --no-cache-dir install ansible"
+      ]
+    },
+    {
+      "type": "ansible-local",
+      "playbook_file": "scripts/setup.yml"
+    },
+    {
+      "type": "shell",
+      "execute_command": "echo 'kube'|{{.Vars}} sudo -S -E bash '{{.Path}}'",
+      "scripts": ["scripts/cleanup.sh"]
+    }
+  ],
+  "post-processors": [
+    {
+      "type": "vagrant",
+      "keep_input_artifact": false,
+      "output": "debian-kube.box"
+    }
+  ]
+}

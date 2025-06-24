@@ -1,0 +1,96 @@
+- hosts: all
+  vars:
+    ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
+  tasks: []
+
+- hosts: master
+  become: yes
+  tasks:
+    - name: Install K3s master
+      shell: |
+        curl -sfL https://get.k3s.io | \
+        INSTALL_K3S_EXEC="--node-ip={{ ansible_host }} --advertise-address={{ ansible_host }} --flannel-iface=enp0s8" sh -
+      args:
+        creates: /etc/rancher/k3s/k3s.yaml
+
+    - name: Get K3s join token
+      slurp:
+        src: /var/lib/rancher/k3s/server/node-token
+      register: token_raw
+
+    - set_fact:
+        k3s_token: "{{ token_raw.content | b64decode | trim }}"
+
+    - name: Set k3s_url using inventory IP
+      set_fact:
+        k3s_url: "https://{{ ansible_host }}:6443"
+
+    - name: Save K3s token and url to shared file
+      copy:
+        dest: /vagrant/k3s_info.json
+        content: |
+          {
+            "k3s_token": "{{ k3s_token }}",
+            "k3s_url": "{{ k3s_url }}"
+          }
+      delegate_to: localhost
+      run_once: true
+
+- hosts: workers
+  become: yes
+  tasks:
+    - name: Read K3s info from shared file
+      slurp:
+        src: /vagrant/k3s_info.json
+      register: k3s_info_raw
+
+    - name: Decode K3s info JSON content
+      set_fact:
+        k3s_info: "{{ k3s_info_raw.content | b64decode | from_json }}"
+
+    - name: Set k3s_token and k3s_url facts from decoded JSON
+      set_fact:
+        k3s_token: "{{ k3s_info.k3s_token }}"
+        k3s_url: "{{ k3s_info.k3s_url }}"
+
+    - name: Join K3s worker
+      shell: |
+        curl -sfL https://get.k3s.io | \
+        INSTALL_K3S_EXEC="--node-ip={{ ansible_host }} --flannel-iface=enp0s8" \
+        K3S_URL={{ k3s_url }} \
+        K3S_TOKEN={{ k3s_token }} sh -
+      args:
+        creates: /etc/rancher/k3s/k3s.yaml
+
+- hosts: master
+  become: yes
+  tasks:
+    - name: Install kubectl
+      shell: |
+        curl -LO https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl
+        chmod +x kubectl && mv kubectl /usr/local/bin/kubectl
+      args:
+        creates: /usr/local/bin/kubectl
+
+    - name: Install helm
+      shell: curl https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 | bash
+      args:
+        creates: /usr/local/bin/helm
+
+    - name: Ensure ~/.kube directory exists for root
+      file:
+        path: /root/.kube
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Copy K3s kubeconfig to root's ~/.kube/config
+      become: yes
+      copy:
+        src: /etc/rancher/k3s/k3s.yaml
+        remote_src: yes
+        dest: /root/.kube/config
+        owner: root
+        group: root
+        mode: '0600'
